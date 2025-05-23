@@ -15,12 +15,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Bot sozlamalari
-TOKEN = os.getenv("7875389500:AAGbrYMfC1evYhM7MSsb-l9YCfinAR2s_sI")
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_CODE = os.getenv("ADMIN_CODE", "Q1w2e3r4+")
 DATA_FILE = "bot_data.json"
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@crm_tekshiruv")
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = os.getenv("https://partners-5m0g.onrender.com")  # Render'dan olinadigan URL, masalan: https://your-app.onrender.com/webhook
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Render'dan olinadigan URL
 WEBAPP_HOST = "0.0.0.0"
 WEBAPP_PORT = int(os.getenv("PORT", 8080))
 
@@ -120,7 +120,7 @@ translations = {
     },
     "ru": {
         "lang_name": "🇷🇺 Русский",
-        "start": "🌐 Пожалуйста, выберите язык:",
+        "start ":
         "welcome": "Здравствуйте! 👋\nВы находитесь в официальном Telegram-боте компании PBS IMPEX. 🌍",
         "menu": ["📝 Регистрация", "📞 Оператор", "🛠 Услуги", "🌍 Сменить язык", "👨‍💼 Админ-панель", "👤 Профиль пользователя"],
         "registration_questions": [
@@ -768,7 +768,7 @@ async def confirm_post(callback: types.CallbackQuery):
 
     await callback.message.delete()
     await bot.send_message(user_id, translations[lang]["post_sent"].format(count=sent_count), reply_markup=get_admin_menu(lang))
-    admin_state[user_id] = {"in_admin": True}
+    admin_state[user_id] = {"in придумать: True}
 
 @router.callback_query(F.data == "retry_post")
 async def retry_post(callback: types.CallbackQuery):
