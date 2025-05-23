@@ -306,16 +306,22 @@ async def start_handler(message: types.Message):
     daily_users[today].add(user_id)
     save_data()
 
+    logger.info(f"Start command received for user_id: {user_id}")
+    logger.info(f"Registered users: {registered_users}")
+    
     if user_id in registered_users:
         lang = user_lang.get(user_id, "uz")
+        logger.info(f"User {user_id} already registered, showing main menu in language: {lang}")
         await message.answer(translations[lang]["welcome"], reply_markup=get_main_menu(lang))
     else:
+        logger.info(f"User {user_id} not registered, showing language selection")
         await message.answer(translations["uz"]["start"], reply_markup=get_language_menu())
 
 # Lang komandasi (Tilni o'zgartirish)
 @router.message(Command("lang"))
 async def lang_handler(message: types.Message):
     user_id = str(message.from_user.id)
+    logger.info(f"Lang command received for user_id: {user_id}")
     await message.answer(translations["uz"]["start"], reply_markup=get_language_menu())
 
 # Admin komandasi
@@ -324,6 +330,7 @@ async def admin_handler(message: types.Message):
     user_id = str(message.from_user.id)
     lang = user_lang.get(user_id, "uz")
     admin_state[user_id] = {"awaiting_code": True}
+    logger.info(f"Admin command received for user_id: {user_id}")
     await message.answer(translations[lang]["admin_code_prompt"], reply_markup=get_registration_nav(lang))
 
 @router.callback_query(F.data.startswith("lang_"))
@@ -332,26 +339,43 @@ async def handle_language_selection(callback: types.CallbackQuery):
     lang = callback.data.split("_")[1]
     user_lang[user_id] = lang
 
+    logger.info(f"Language selected for user_id: {user_id}, language: {lang}")
+    logger.info(f"Registered users check: {user_id in registered_users}")
+
     if user_id in registered_users:
+        logger.info(f"User {user_id} already registered, showing main menu")
         await callback.message.edit_text(translations[lang]["welcome"], reply_markup=get_main_menu(lang))
     else:
+        logger.info(f"User {user_id} not registered, initiating registration process")
         user_data[user_id] = {"initial_step": 0, "initial_answers": {}, "awaiting_code": False}
         await callback.message.edit_text(translations[lang]["welcome"], reply_markup=None)
+        logger.info(f"Calling ask_initial_question for user_id: {user_id}")
         await ask_initial_question(user_id)
     
     await callback.answer()
 
 async def ask_initial_question(user_id):
     lang = user_lang.get(user_id, "uz")
+    logger.info(f"ask_initial_question called for user_id: {user_id}, lang: {lang}")
+    
+    if user_id not in user_data:
+        logger.error(f"User {user_id} not found in user_data, resetting")
+        user_data[user_id] = {"initial_step": 0, "initial_answers": {}, "awaiting_code": False}
+    
     step = user_data[user_id]["initial_step"]
+    logger.info(f"Current step for user_id {user_id}: {step}")
+    
     if step < len(translations[lang]["initial_questions"]):
+        logger.info(f"Asking question {step} to user_id: {user_id}")
         await bot.send_message(user_id, translations[lang]["initial_questions"][step], reply_markup=None)
     elif not user_data[user_id].get("awaiting_code"):
         code = str(random.randint(1000, 9999))
         verification_codes[user_id] = code
         user_data[user_id]["awaiting_code"] = True
+        logger.info(f"Sending verification code {code} to user_id: {user_id}")
         await bot.send_message(user_id, translations[lang]["verify_code"].format(code=code), reply_markup=None)
     else:
+        logger.info(f"User {user_id} already in verification stage, awaiting code")
         await verify_code(user_id)
 
 async def handle_initial_answer(message: types.Message):
@@ -359,34 +383,49 @@ async def handle_initial_answer(message: types.Message):
     lang = user_lang.get(user_id, "uz")
     text = message.text
 
+    logger.info(f"Handling initial answer from user_id: {user_id}, text: {text}")
+
+    if user_id not in user_data:
+        logger.error(f"User {user_id} not found in user_data during handle_initial_answer")
+        return
+
     if user_data[user_id].get("awaiting_code"):
+        logger.info(f"User {user_id} in verification stage, checking code: {text}")
         if text == verification_codes.get(user_id):
             registered_users[user_id] = user_data[user_id]["initial_answers"]
             save_data()
+            logger.info(f"User {user_id} verified successfully")
             await message.answer(translations[lang]["code_correct"], reply_markup=get_main_menu(lang))
             user_data.pop(user_id)
             verification_codes.pop(user_id, None)
         else:
+            logger.info(f"User {user_id} entered incorrect code: {text}")
             await message.answer(translations[lang]["code_incorrect"], reply_markup=None)
         return
 
     step = user_data[user_id]["initial_step"]
+    logger.info(f"Processing step {step} for user_id: {user_id}")
+
     if step == 1:
         cleaned_text = text.replace("+", "").replace(" ", "")
         if not cleaned_text.isdigit():
+            logger.info(f"Invalid phone number from user_id: {user_id}")
             await message.answer(translations[lang]["error_phone"], reply_markup=None)
             return
         if len(cleaned_text) not in [9, 12]:
+            logger.info(f"Phone number length invalid for user_id: {user_id}")
             await message.answer(translations[lang]["error_phone_length"], reply_markup=None)
             return
     elif step == 0:
         if any(char.isdigit() for char in text):
+            logger.info(f"Name contains digits for user_id: {user_id}")
             await message.answer(translations[lang]["error_no_digits"], reply_markup=None)
             return
 
     question = translations[lang]["initial_questions"][step]
     user_data[user_id]["initial_answers"][question] = text
     user_data[user_id]["initial_step"] += 1
+    logger.info(f"Answer saved for user_id: {user_id}, proceeding to next step")
     await ask_initial_question(user_id)
 
 # Ro'yxatdan o'tish jarayoni
@@ -394,7 +433,9 @@ async def handle_initial_answer(message: types.Message):
 async def start_registration(message: types.Message):
     user_id = str(message.from_user.id)
     lang = user_lang.get(user_id, "uz")
+    logger.info(f"Starting registration for user_id: {user_id}")
     if user_id not in registered_users:
+        logger.info(f"User {user_id} not registered, prompting to register")
         await message.answer(translations[lang]["error_not_registered"], reply_markup=get_main_menu(lang))
         return
     user_data[user_id] = {"step": 0, "documents": {}, "file_types": {}}
@@ -486,6 +527,7 @@ async def handle_language_and_menu(message: types.Message):
     save_data()
 
     if user_id in user_data and "initial_step" in user_data[user_id]:
+        logger.info(f"User {user_id} in initial registration phase")
         await handle_initial_answer(message)
         return
 
