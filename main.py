@@ -15,12 +15,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Bot sozlamalari
-TOKEN = os.getenv("7875389500:AAGbrYMfC1evYhM7MSsb-l9YCfinAR2s_sI")
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ADMIN_CODE = os.getenv("ADMIN_CODE", "Q1w2e3r4+")
 DATA_FILE = "bot_data.json"
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@crm_tekshiruv")
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = os.getenv("https://partners-5m0g.onrender.com")  # Render'dan olinadigan URL
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Render'dan olinadigan URL
 WEBAPP_HOST = "0.0.0.0"
 WEBAPP_PORT = int(os.getenv("PORT", 8080))
 
