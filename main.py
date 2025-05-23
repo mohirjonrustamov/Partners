@@ -309,6 +309,10 @@ async def start_handler(message: types.Message):
     logger.info(f"Start command received for user_id: {user_id}")
     logger.info(f"Registered users: {registered_users}")
     
+    # Har safar til tanlashdan boshlash uchun registered_users tekshiruvi o‘chiriladi
+    logger.info(f"Showing language selection for user_id: {user_id}")
+    await message.answer(translations["uz"]["start"], reply_markup=get_language_menu())
+    
     if user_id in registered_users:
         lang = user_lang.get(user_id, "uz")
         logger.info(f"User {user_id} already registered, showing main menu in language: {lang}")
