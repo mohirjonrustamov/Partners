@@ -25,7 +25,7 @@ WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 WEBAPP_HOST = "0.0.0.0"
 WEBAPP_PORT = int(os.getenv("PORT", 8080))
-BITRIX_LEAD_URL = os.getenv("BITRIX_LEAD_URL")  # Bitrix24 webhook URL
+BITRIX_WEBHOOK_URL = "https://pbsimpex.bitrix24.ru/rest/56/d73iwlisd80cv79z/"  # Bitrix24 webhook URL
 
 # Bot va Dispatcher
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -94,18 +94,21 @@ def send_lead_to_bitrix(name, phone, documents, max_retries=3):
     comments = f"Telefon: {phone}\nHujjatlar:\n"
     for i, doc in documents.items():
         comments += f"Hujjat {i+1}: Yuklandi\n"
-    
+
     payload = {
         "fields": {
             "TITLE": "PBS IMPEX - Yangi ro'yxatdan o'tgan foydalanuvchi",
             "NAME": name,
             "PHONE": [{"VALUE": phone, "VALUE_TYPE": "WORK"}],
-            "COMMENTS": comments
+            "COMMENTS": comments,
+            "SOURCE_ID": "WEB",
+            "STATUS_ID": "NEW"
         }
     }
+
     for attempt in range(max_retries):
         try:
-            response = requests.post(BITRIX_LEAD_URL, json=payload, timeout=10)
+            response = requests.post(f"{BITRIX_WEBHOOK_URL}crm.lead.add", json=payload, timeout=10)
             response.raise_for_status()
             logger.info(f"Bitrix24'ga muvaffaqiyatli yuborildi: {response.json()}")
             return response.json()
@@ -512,9 +515,18 @@ async def confirm_registration(callback: types.CallbackQuery):
     name = initial_data.get(name_key, "Noma'lum")
     phone = initial_data.get(phone_key, "Noma'lum")
 
+    # Telefon raqamini to'g'ri formatda tayyorlash
+    cleaned_phone = phone.replace("+", "").replace(" ", "")
+    if not cleaned_phone.startswith("998") and len(cleaned_phone) == 9:
+        cleaned_phone = f"998{cleaned_phone}"
+    elif len(cleaned_phone) == 12 and not cleaned_phone.startswith("+"):
+        cleaned_phone = f"+{cleaned_phone}"
+    else:
+        cleaned_phone = f"+{cleaned_phone}"
+
     # Telegram kanaliga yuborish
     message_text = f"📝 Yangi ro'yxatdan o'tgan foydalanuvchi: @{callback.from_user.username}\n"
-    message_text += f"Ism/Familiya: {name}\nTelefon: {phone}\n"
+    message_text += f"Ism/Familiya: {name}\nTelefon: {cleaned_phone}\n"
     for i, doc in documents.items():
         file_type = file_types[i]
         if file_type == "photo":
@@ -524,7 +536,13 @@ async def confirm_registration(callback: types.CallbackQuery):
     await bot.send_message(CHANNEL_ID, message_text)
 
     # Bitrix24'ga yuborish
-    send_lead_to_bitrix(name, phone, documents)
+    bitrix_response = send_lead_to_bitrix(name, cleaned_phone, documents)
+    if "error" in bitrix_response:
+        logger.error(f"Bitrix24'ga yuborish muvaffaqiyatsiz: {bitrix_response['error']}")
+        await bot.send_message(CHANNEL_ID, f"❌ Bitrix24'ga yuborishda xatolik: {bitrix_response['error']}")
+    else:
+        logger.info(f"Bitrix24'ga muvaffaqiyatli yuborildi: Lead ID {bitrix_response.get('result')}")
+        await bot.send_message(CHANNEL_ID, f"✅ Bitrix24'ga muvaffaqiyatli yuborildi: Lead ID {bitrix_response.get('result')}")
 
     await callback.message.answer(translations[lang]["received"], reply_markup=get_main_menu(lang))
     user_data.pop(user_id, None)
