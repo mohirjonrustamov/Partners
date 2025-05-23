@@ -584,23 +584,23 @@ async def handle_language_and_menu(message: types.Message):
 🏢 Manzil: Toshkent shahri, Nukus ko‘chasi, 3 uy
 📞 Telefon: +99871 2155638
 👨‍💼 Sale menedjer: Mohirjon Rustamov
-📱 +99891 166-75-36
+📱 +99893 355-75-36
 ✉️ E-mail: office@pbs-impex.uz
-🌐 Web: https://pbs-impex.uz/""",
+🌐 Web: https://pbsimpex.com/?v=2""",
             "ru": """<b>«PBS IMPEX» ЧП</b>
 🏢 Адрес: г. Ташкент, улица Нукус, дом 3
 📞 Телефон: +99871 2155638
 👨‍💼 Менеджер по продажам: Мохиржон Рустамов
-📱 +99891 166-75-36
+📱 +99893 355-75-36
 ✉️ E-mail: office@pbs-impex.uz
-🌐 Сайт: https://pbs-impex.uz/""",
+🌐 Сайт: https://pbsimpex.com/?v=2""",
             "en": """<b>«PBS IMPEX» LLC</b>
 🏢 Address: Nukus street 3, Tashkent
 📞 Phone: +99871 2155638
 👨‍💼 Sales Manager: Mohirjon Rustamov
-📱 +99891 166-75-36
+📱 +99893 355-75-36
 ✉️ E-mail: office@pbs-impex.uz
-🌐 Website: https://pbs-impex.uz/"""
+🌐 Website: https://pbsimpex.com/?v=2"""
         }
         await message.answer(operator_info[lang], reply_markup=get_main_menu(lang), parse_mode="HTML")
         return
