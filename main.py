@@ -15,12 +15,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Bot sozlamalari
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TOKEN = os.getenv("7875389500:AAGbrYMfC1evYhM7MSsb-l9YCfinAR2s_sI")
 ADMIN_CODE = os.getenv("ADMIN_CODE", "Q1w2e3r4+")
 DATA_FILE = "bot_data.json"
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@crm_tekshiruv")
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Render'dan olinadigan URL
+WEBHOOK_URL = os.getenv("https://partners-5m0g.onrender.com")  # Render'dan olinadigan URL
 WEBAPP_HOST = "0.0.0.0"
 WEBAPP_PORT = int(os.getenv("PORT", 8080))
 
@@ -84,7 +84,7 @@ translations = {
         "lang_name": "🇺🇿 O'zbekcha",
         "start": "🌐 Iltimos, tilni tanlang:",
         "welcome": "Assalomu alaykum! 👋\nSiz PBS IMPEX kompaniyasining rasmiy Telegram botidasiz. 🌍",
-        "menu": ["📝 Ro'yxatdan o'tish", "📞 Operator", "🛠 Xizmatlar", "🌍 Tilni o‘zgartirish", "👨‍💼 Admin paneli", "👤 Foydalanuvchi profili"],
+        "menu": ["📝 Ro'yxatdan o'tish", "📞 Operator", "🛠 Xizmatlar", "👤 Foydalanuvchi profili"],
         "registration_questions": [
             "1️⃣ Pasport yoki ID suratini yuklang (.jpg, .jpeg, .png, .pdf):",
             "2️⃣ Texpasport suratini yuklang (.jpg, .jpeg, .png, .pdf):",
@@ -120,9 +120,9 @@ translations = {
     },
     "ru": {
         "lang_name": "🇷🇺 Русский",
-        "start ":
+        "start": "🌐 Пожалуйста, выберите язык:",
         "welcome": "Здравствуйте! 👋\nВы находитесь в официальном Telegram-боте компании PBS IMPEX. 🌍",
-        "menu": ["📝 Регистрация", "📞 Оператор", "🛠 Услуги", "🌍 Сменить язык", "👨‍💼 Админ-панель", "👤 Профиль пользователя"],
+        "menu": ["📝 Регистрация", "📞 Оператор", "🛠 Услуги", "👤 Профиль пользователя"],
         "registration_questions": [
             "1️⃣ Загрузите скан паспорта или ID (.jpg, .jpeg, .png, .pdf):",
             "2️⃣ Загрузите скан транспортного паспорта (.jpg, .jpeg, .png, .pdf):",
@@ -160,7 +160,7 @@ translations = {
         "lang_name": "🇬🇧 English",
         "start": "🌐 Please select a language:",
         "welcome": "Hello! 👋\nYou are in the official Telegram bot of PBS IMPEX. 🌍",
-        "menu": ["📝 Registration", "📞 Contact Operator", "🛠 Services", "🌍 Change Language", "👨‍💼 Admin Panel", "👤 User Profile"],
+        "menu": ["📝 Registration", "📞 Contact Operator", "🛠 Services", "👤 User Profile"],
         "registration_questions": [
             "1️⃣ Upload a scan of your passport or ID (.jpg, .jpeg, .png, .pdf):",
             "2️⃣ Upload a scan of your transport passport (.jpg, .jpeg, .png, .pdf):",
@@ -285,6 +285,15 @@ def get_post_confirm_buttons(lang):
         ]]
     )
 
+# Botni ishga tushirishda buyruqlarni o'rnatish (chap burchakdagi tugmalar)
+async def set_bot_commands():
+    commands = [
+        types.BotCommand(command="start", description="Botni qayta ishga tushirish"),
+        types.BotCommand(command="lang", description="Tilni o'zgartirish"),
+        types.BotCommand(command="admin", description="Admin paneliga kirish")
+    ]
+    await bot.set_my_commands(commands)
+
 # Start komandasi
 @router.message(Command("start"))
 async def start_handler(message: types.Message):
@@ -301,6 +310,20 @@ async def start_handler(message: types.Message):
         await message.answer(translations[lang]["welcome"], reply_markup=get_main_menu(lang))
     else:
         await message.answer(translations["uz"]["start"], reply_markup=get_language_menu())
+
+# Lang komandasi (Tilni o'zgartirish)
+@router.message(Command("lang"))
+async def lang_handler(message: types.Message):
+    user_id = str(message.from_user.id)
+    await message.answer(translations["uz"]["start"], reply_markup=get_language_menu())
+
+# Admin komandasi
+@router.message(Command("admin"))
+async def admin_handler(message: types.Message):
+    user_id = str(message.from_user.id)
+    lang = user_lang.get(user_id, "uz")
+    admin_state[user_id] = {"awaiting_code": True}
+    await message.answer(translations[lang]["admin_code_prompt"], reply_markup=get_registration_nav(lang))
 
 @router.callback_query(F.data.startswith("lang_"))
 async def handle_language_selection(callback: types.CallbackQuery):
@@ -465,10 +488,6 @@ async def handle_language_and_menu(message: types.Message):
         await handle_initial_answer(message)
         return
 
-    if message.text == translations[lang]["menu"][3]:
-        await message.answer(translations[lang]["start"], reply_markup=get_language_menu())
-        return
-
     if message.text == translations[lang]["home"]:
         admin_state.pop(user_id, None)
         user_data.pop(user_id, None)
@@ -506,7 +525,7 @@ async def handle_language_and_menu(message: types.Message):
         await message.answer(translations[lang]["services"], reply_markup=get_services_menu(lang))
         return
 
-    elif message.text == translations[lang]["menu"][5]:
+    elif message.text == translations[lang]["menu"][3]:
         if user_id in registered_users:
             initial_data = registered_users[user_id]
             name_key = translations[lang]["initial_questions"][0]
@@ -518,11 +537,6 @@ async def handle_language_and_menu(message: types.Message):
             await message.answer(profile_text, reply_markup=get_profile_buttons(lang))
         else:
             await message.answer(translations[lang]["error_not_registered"], reply_markup=get_main_menu(lang))
-        return
-
-    elif message.text == translations[lang]["menu"][4]:
-        admin_state[user_id] = {"awaiting_code": True}
-        await message.answer(translations[lang]["admin_code_prompt"], reply_markup=get_registration_nav(lang))
         return
 
     elif user_id in admin_state and admin_state[user_id].get("awaiting_code"):
@@ -768,7 +782,7 @@ async def confirm_post(callback: types.CallbackQuery):
 
     await callback.message.delete()
     await bot.send_message(user_id, translations[lang]["post_sent"].format(count=sent_count), reply_markup=get_admin_menu(lang))
-    admin_state[user_id] = {"in придумать: True}
+    admin_state[user_id] = {"in_admin": True}
 
 @router.callback_query(F.data == "retry_post")
 async def retry_post(callback: types.CallbackQuery):
@@ -785,6 +799,7 @@ async def retry_post(callback: types.CallbackQuery):
 # Webhook server
 async def on_startup():
     load_data()
+    await set_bot_commands()  # Bot buyruqlarini o'rnatish
     webhook_info = await bot.get_webhook_info()
     if webhook_info.url != WEBHOOK_URL:
         await bot.set_webhook(url=WEBHOOK_URL)
