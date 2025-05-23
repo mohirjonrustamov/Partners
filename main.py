@@ -3,6 +3,7 @@ import logging
 import json
 import os
 import random
+import requests
 from aiogram import Bot, Dispatcher, types, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command, Filter
@@ -21,10 +22,12 @@ ADMIN_CODE = os.getenv("ADMIN_CODE", "Q1w2e3r4+")
 DATA_FILE = "bot_data.json"
 CHANNEL_ID = os.getenv("CHANNEL_ID", "@crm_tekshiruv")
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Render'dan olinadigan URL
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 WEBAPP_HOST = "0.0.0.0"
 WEBAPP_PORT = int(os.getenv("PORT", 8080))
+BITRIX_LEAD_URL = os.getenv("BITRIX_LEAD_URL")  # Bitrix24 webhook URL
 
+# Bot va Dispatcher
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 router = Router()
@@ -41,7 +44,14 @@ user_documents = {}
 verification_codes = {}
 
 # Logging sozlash
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger(__name__)
 
 # Ma'lumotlarni fayldan yuklash
@@ -58,7 +68,7 @@ def load_data():
                 registered_users = data.get("registered_users", {})
                 user_documents = data.get("user_documents", {})
         except (json.JSONDecodeError, ValueError) as e:
-            logging.error(f"Ma'lumotlarni yuklashda xatolik: {e}. Yangi fayl yaratilmoqda.")
+            logger.error(f"Ma'lumotlarni yuklashda xatolik: {e}. Yangi fayl yaratilmoqda.")
             os.remove(DATA_FILE)
             users, blocked_users, daily_users, registered_users, user_documents = set(), set(), {}, {}, {}
     else:
@@ -77,33 +87,60 @@ def save_data():
                 "user_documents": user_documents
             }, f, indent=4, ensure_ascii=False)
     except Exception as e:
-        logging.error(f"Ma'lumotlarni saqlashda xatolik: {e}")
+        logger.error(f"Ma'lumotlarni saqlashda xatolik: {e}")
+
+# Bitrix24'ga ma'lumotlarni yuborish
+def send_lead_to_bitrix(name, phone, documents, max_retries=3):
+    comments = f"Telefon: {phone}\nHujjatlar:\n"
+    for i, doc in documents.items():
+        comments += f"Hujjat {i+1}: Yuklandi\n"
+    
+    payload = {
+        "fields": {
+            "TITLE": "PBS IMPEX - Yangi ro'yxatdan o'tgan foydalanuvchi",
+            "NAME": name,
+            "PHONE": [{"VALUE": phone, "VALUE_TYPE": "WORK"}],
+            "COMMENTS": comments
+        }
+    }
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(BITRIX_LEAD_URL, json=payload, timeout=10)
+            response.raise_for_status()
+            logger.info(f"Bitrix24'ga muvaffaqiyatli yuborildi: {response.json()}")
+            return response.json()
+        except requests.RequestException as e:
+            logger.error(f"Bitrix24'ga yuborishda xatolik (urinish {attempt + 1}/{max_retries}): {e}")
+            if attempt == max_retries - 1:
+                return {"error": str(e)}
+            asyncio.sleep(2 ** attempt)
 
 # Tarjimalar
 translations = {
     "uz": {
         "lang_name": "🇺🇿 O'zbekcha",
         "start": "🌐 Iltimos, tilni tanlang:",
-        "welcome": "Assalomu alaykum! 👋\nSiz PBS IMPEX kompaniyasining rasmiy Telegram botidasiz. 🌍",
+        "welcome": "Assalomu alaykum! 👋\nSiz PBS IMPEX kompaniyasining rasmiy Telegram botidasiz. 🌍\n\nBiz yuk tashish va logistika xizmatlarini Markaziy Osiyo hamda xalqaro yo‘nalishlarda taqdim etamiz. ✈️🚛🚢🚂\n\n📦 Buyurtma berish yoki xizmatlar bilan tanishish uchun quyidagi menyudan foydalaning. 👇",
         "menu": ["📝 Ro'yxatdan o'tish", "📞 Operator", "🛠 Xizmatlar", "👤 Foydalanuvchi profili"],
         "registration_questions": [
             "1️⃣ Pasport yoki ID suratini yuklang (.jpg, .jpeg, .png, .pdf):",
             "2️⃣ Texpasport suratini yuklang (.jpg, .jpeg, .png, .pdf):",
             "3️⃣ Xalqaro yuk tashish litsenziyasini yuklang (.jpg, .jpeg, .png, .pdf):"
         ],
-        "initial_questions": [
-            "Ismingiz yoki familiyangiz?",
-            "Telefon raqamingiz?"
-        ],
+        "initial_questions": ["Ismingiz yoki familiyangiz?", "Telefon raqamingiz?"],
+        "verify_code": "Tasdiqlash kodi yuborildi: {code}\nIltimos, kodni kiriting:",
+        "code_correct": "✅ Kod tasdiqlandi! Botga xush kelibsiz!",
+        "code_incorrect": "❌ Noto‘g‘ri kod! Qaytadan kiriting:",
+        "error_phone": "❌ Telefon raqami noto‘g‘ri! Faqat raqamlar kiritilishi kerak. Qaytadan kiriting:",
+        "error_phone_length": "❌ Telefon raqami 9 yoki 12 ta raqamdan iborat bo‘lishi kerak! Qaytadan kiriting:",
+        "error_no_digits": "❌ Bu maydonda raqamlar ishlatilmasligi kerak! Qaytadan kiriting:",
+        "error_not_registered": "Iltimos, avval ism va telefon raqamingizni kiriting!",
         "confirm": "✅ Tasdiqlash",
         "retry": "🔄 O‘zgartirish",
         "home": "🏠 Bosh sahifa",
         "back": "🔙 Orqaga",
         "received": "✅ Ma'lumotlar qabul qilindi. Tez orada bog‘lanamiz!",
         "error_invalid_file": "❌ Noto‘g‘ri fayl formati! Faqat .jpg, .jpeg, .png yoki .pdf fayllar qabul qilinadi.",
-        "error_phone": "❌ Telefon raqami noto‘g‘ri! Faqat raqamlar kiritilishi kerak. Qaytadan kiriting:",
-        "error_phone_length": "❌ Telefon raqami 9 yoki 12 ta raqamdan iborat bo‘lishi kerak! Qaytadan kiriting:",
-        "error_no_digits": "❌ Bu maydonda raqamlar ishlatilmasligi kerak! Qaytadan kiriting:",
         "services": "🛠 Xizmatlar",
         "admin_menu": ["📊 Statistika", "📢 Post", "🏠 Bosh sahifa"],
         "admin_code_prompt": "🔑 Admin paneliga kirish uchun kodni kiriting:",
@@ -113,35 +150,32 @@ translations = {
         "post_prompt": "📢 Post yozing (matn, rasm yoki video):",
         "post_confirm": "📢 Yuboriladigan post:\n\n{post}\n\nTasdiqlaysizmi?",
         "post_sent": "✅ Post {count} foydalanuvchiga yuborildi!",
-        "profile": "👤 Foydalanuvchi profili:\nIsm/Familiya: {name}\nTelefon: {phone}",
-        "verify_code": "Tasdiqlash kodi yuborildi: {code}\nIltimos, kodni kiriting:",
-        "code_correct": "✅ Kod tasdiqlandi! Botga xush kelibsiz!",
-        "code_incorrect": "❌ Noto‘g‘ri kod! Qaytadan kiriting:",
-        "error_not_registered": "Iltimos, avval ism va telefon raqamingizni kiriting!"
+        "profile": "👤 Foydalanuvchi profili:\nIsm/Familiya: {name}\nTelefon: {phone}"
     },
     "ru": {
         "lang_name": "🇷🇺 Русский",
         "start": "🌐 Пожалуйста, выберите язык:",
-        "welcome": "Здравствуйте! 👋\nВы находитесь в официальном Telegram-боте компании PBS IMPEX. 🌍",
+        "welcome": "Здравствуйте! 👋\nВы находитесь в официальном Telegram-боте компании PBS IMPEX. 🌍\n\nМы предоставляем услуги по перевозке и логистике в Центральной Азии и по всему миру. ✈️🚛🚢🚂\n\n📦 Для оформления заказа или получения информации воспользуйтесь меню ниже. 👇",
         "menu": ["📝 Регистрация", "📞 Оператор", "🛠 Услуги", "👤 Профиль пользователя"],
         "registration_questions": [
             "1️⃣ Загрузите скан паспорта или ID (.jpg, .jpeg, .png, .pdf):",
             "2️⃣ Загрузите скан транспортного паспорта (.jpg, .jpeg, .png, .pdf):",
             "3️⃣ Загрузите международную лицензию на перевозку грузов (.jpg, .jpeg, .png, .pdf):"
         ],
-        "initial_questions": [
-            "Ваше имя или фамилия?",
-            "Ваш номер телефона?"
-        ],
+        "initial_questions": ["Ваше имя или фамилия?", "Ваш номер телефона?"],
+        "verify_code": "Код подтверждения отправлен: {code}\nПожалуйста, введите код:",
+        "code_correct": "✅ Код подтвержден! Добро пожаловать в бот!",
+        "code_incorrect": "❌ Неверный код! Введите еще раз:",
+        "error_phone": "❌ Номер телефона неверный! Вводите только цифры. Повторите ввод:",
+        "error_phone_length": "❌ Номер телефона должен содержать 9 или 12 цифр! Повторите ввод:",
+        "error_no_digits": "❌ В этом поле нельзя использовать цифры! Повторите ввод:",
+        "error_not_registered": "Пожалуйста, сначала введите ваше имя и номер телефона!",
         "confirm": "✅ Подтвердить",
         "retry": "🔄 Изменить",
         "home": "🏠 Главное меню",
         "back": "🔙 Назад",
         "received": "✅ Данные получены. Мы скоро свяжемся с вами!",
         "error_invalid_file": "❌ Неверный формат файла! Принимаются только файлы .jpg, .jpeg, .png или .pdf.",
-        "error_phone": "❌ Номер телефона неверный! Вводите только цифры. Повторите ввод:",
-        "error_phone_length": "❌ Номер телефона должен содержать 9 или 12 цифр! Повторите ввод:",
-        "error_no_digits": "❌ В этом поле нельзя использовать цифры! Повторите ввод:",
         "services": "🛠 Услуги",
         "admin_menu": ["📊 Статистика", "📢 Пост", "🏠 Главное меню"],
         "admin_code_prompt": "🔑 Введите код для входа в админ-панель:",
@@ -151,35 +185,32 @@ translations = {
         "post_prompt": "📢 Напишите пост (текст, фото или видео):",
         "post_confirm": "📢 Пост для отправки:\n\n{post}\n\nПодтверждаете?",
         "post_sent": "✅ Пост отправлен {count} пользователям!",
-        "profile": "👤 Профиль пользователя:\nИмя/Фамилия: {name}\nТелефон: {phone}",
-        "verify_code": "Код подтверждения отправлен: {code}\nПожалуйста, введите код:",
-        "code_correct": "✅ Код подтвержден! Добро пожаловать в бот!",
-        "code_incorrect": "❌ Неверный код! Введите еще раз:",
-        "error_not_registered": "Пожалуйста, сначала введите ваше имя и номер телефона!"
+        "profile": "👤 Профиль пользователя:\nИмя/Фамилия: {name}\nТелефон: {phone}"
     },
     "en": {
         "lang_name": "🇬🇧 English",
         "start": "🌐 Please select a language:",
-        "welcome": "Hello! 👋\nYou are in the official Telegram bot of PBS IMPEX. 🌍",
+        "welcome": "Hello! 👋\nYou are in the official Telegram bot of PBS IMPEX. 🌍\n\nWe provide freight and logistics services in Central Asia and internationally. ✈️🚛🚢🚂\n\n📦 To place an order or view services, use the menu below. 👇",
         "menu": ["📝 Registration", "📞 Contact Operator", "🛠 Services", "👤 User Profile"],
         "registration_questions": [
             "1️⃣ Upload a scan of your passport or ID (.jpg, .jpeg, .png, .pdf):",
             "2️⃣ Upload a scan of your transport passport (.jpg, .jpeg, .png, .pdf):",
             "3️⃣ Upload an international cargo transportation license (.jpg, .jpeg, .png, .pdf):"
         ],
-        "initial_questions": [
-            "Your name or surname?",
-            "Your phone number?"
-        ],
+        "initial_questions": ["Your name or surname?", "Your phone number?"],
+        "verify_code": "Verification code sent: {code}\nPlease enter the code:",
+        "code_correct": "✅ Code verified! Welcome to the bot!",
+        "code_incorrect": "❌ Incorrect code! Please try again:",
+        "error_phone": "❌ Invalid phone number! Only digits are allowed. Please try again:",
+        "error_phone_length": "❌ Phone number must be 9 or 12 digits long! Please try again:",
+        "error_no_digits": "❌ Digits are not allowed in this field! Please try again:",
+        "error_not_registered": "Please enter your name and phone number first!",
         "confirm": "✅ Confirm",
         "retry": "🔄 Edit",
         "home": "🏠 Home",
         "back": "🔙 Back",
         "received": "✅ Data received. We will contact you soon!",
         "error_invalid_file": "❌ Invalid file format! Only .jpg, .jpeg, .png, or .pdf files are accepted.",
-        "error_phone": "❌ Invalid phone number! Only digits are allowed. Please try again:",
-        "error_phone_length": "❌ Phone number must be 9 or 12 digits long! Please try again:",
-        "error_no_digits": "❌ Digits are not allowed in this field! Please try again:",
         "services": "🛠 Services",
         "admin_menu": ["📊 Statistics", "📢 Post", "🏠 Home"],
         "admin_code_prompt": "🔑 Enter the code to access the Admin Panel:",
@@ -189,11 +220,7 @@ translations = {
         "post_prompt": "📢 Write a post (text, photo, or video):",
         "post_confirm": "📢 Post to send:\n\n{post}\n\nConfirm?",
         "post_sent": "✅ Post sent to {count} users!",
-        "profile": "👤 User Profile:\nName/Surname: {name}\nPhone: {phone}",
-        "verify_code": "Verification code sent: {code}\nPlease enter the code:",
-        "code_correct": "✅ Code verified! Welcome to the bot!",
-        "code_incorrect": "❌ Incorrect code! Please try again:",
-        "error_not_registered": "Please enter your name and phone number first!"
+        "profile": "👤 User Profile:\nName/Surname: {name}\nPhone: {phone}"
     }
 }
 
@@ -286,7 +313,7 @@ def get_post_confirm_buttons(lang):
         ]]
     )
 
-# Botni ishga tushirishda buyruqlarni o'rnatish (chap burchakdagi tugmalar)
+# Botni ishga tushirishda buyruqlarni o'rnatish
 async def set_bot_commands():
     commands = [
         types.BotCommand(command="start", description="Botni qayta ishga tushirish"),
@@ -309,17 +336,8 @@ async def start_handler(message: types.Message):
     logger.info(f"Start command received for user_id: {user_id}")
     logger.info(f"Registered users: {registered_users}")
     
-    # Har safar til tanlashdan boshlash uchun registered_users tekshiruvi o‘chiriladi
-    logger.info(f"Showing language selection for user_id: {user_id}")
+    # Har safar til tanlashdan boshlash
     await message.answer(translations["uz"]["start"], reply_markup=get_language_menu())
-    
-    if user_id in registered_users:
-        lang = user_lang.get(user_id, "uz")
-        logger.info(f"User {user_id} already registered, showing main menu in language: {lang}")
-        await message.answer(translations[lang]["welcome"], reply_markup=get_main_menu(lang))
-    else:
-        logger.info(f"User {user_id} not registered, showing language selection")
-        await message.answer(translations["uz"]["start"], reply_markup=get_language_menu())
 
 # Lang komandasi (Tilni o'zgartirish)
 @router.message(Command("lang"))
@@ -337,6 +355,7 @@ async def admin_handler(message: types.Message):
     logger.info(f"Admin command received for user_id: {user_id}")
     await message.answer(translations[lang]["admin_code_prompt"], reply_markup=get_registration_nav(lang))
 
+# Til tanlash
 @router.callback_query(F.data.startswith("lang_"))
 async def handle_language_selection(callback: types.CallbackQuery):
     user_id = str(callback.from_user.id)
@@ -344,20 +363,15 @@ async def handle_language_selection(callback: types.CallbackQuery):
     user_lang[user_id] = lang
 
     logger.info(f"Language selected for user_id: {user_id}, language: {lang}")
-    logger.info(f"Registered users check: {user_id in registered_users}")
-
-    if user_id in registered_users:
-        logger.info(f"User {user_id} already registered, showing main menu")
-        await callback.message.edit_text(translations[lang]["welcome"], reply_markup=get_main_menu(lang))
-    else:
-        logger.info(f"User {user_id} not registered, initiating registration process")
-        user_data[user_id] = {"initial_step": 0, "initial_answers": {}, "awaiting_code": False}
-        await callback.message.edit_text(translations[lang]["welcome"], reply_markup=None)
-        logger.info(f"Calling ask_initial_question for user_id: {user_id}")
-        await ask_initial_question(user_id)
+    
+    # Ro‘yxatdan o‘tish jarayonini boshlash
+    user_data[user_id] = {"initial_step": 0, "initial_answers": {}, "awaiting_code": False}
+    await callback.message.edit_text(translations[lang]["welcome"], reply_markup=None)
+    await ask_initial_question(user_id)
     
     await callback.answer()
 
+# Dastlabki savollar va tasdiqlash
 async def ask_initial_question(user_id):
     lang = user_lang.get(user_id, "uz")
     logger.info(f"ask_initial_question called for user_id: {user_id}, lang: {lang}")
@@ -410,7 +424,7 @@ async def handle_initial_answer(message: types.Message):
     step = user_data[user_id]["initial_step"]
     logger.info(f"Processing step {step} for user_id: {user_id}")
 
-    if step == 1:
+    if step == 1:  # Telefon raqami
         cleaned_text = text.replace("+", "").replace(" ", "")
         if not cleaned_text.isdigit():
             logger.info(f"Invalid phone number from user_id: {user_id}")
@@ -420,7 +434,7 @@ async def handle_initial_answer(message: types.Message):
             logger.info(f"Phone number length invalid for user_id: {user_id}")
             await message.answer(translations[lang]["error_phone_length"], reply_markup=None)
             return
-    elif step == 0:
+    elif step == 0:  # Ism
         if any(char.isdigit() for char in text):
             logger.info(f"Name contains digits for user_id: {user_id}")
             await message.answer(translations[lang]["error_no_digits"], reply_markup=None)
@@ -491,14 +505,16 @@ async def confirm_registration(callback: types.CallbackQuery):
     documents = user_data[user_id]["documents"]
     file_types = user_data[user_id]["file_types"]
     
-    message_text = f"📝 Yangi ro'yxatdan o'tgan foydalanuvchi: @{callback.from_user.username}\n"
-    if user_id in registered_users:
-        initial_data = registered_users[user_id]
-        name_key = translations[lang]["initial_questions"][0]
-        phone_key = translations[lang]["initial_questions"][1]
-        message_text += f"Ism/Familiya: {initial_data.get(name_key, 'Nomalum')}\n"
-        message_text += f"Telefon: {initial_data.get(phone_key, 'Nomalum')}\n"
+    # Foydalanuvchi ma'lumotlari
+    initial_data = registered_users[user_id]
+    name_key = translations[lang]["initial_questions"][0]
+    phone_key = translations[lang]["initial_questions"][1]
+    name = initial_data.get(name_key, "Noma'lum")
+    phone = initial_data.get(phone_key, "Noma'lum")
 
+    # Telegram kanaliga yuborish
+    message_text = f"📝 Yangi ro'yxatdan o'tgan foydalanuvchi: @{callback.from_user.username}\n"
+    message_text += f"Ism/Familiya: {name}\nTelefon: {phone}\n"
     for i, doc in documents.items():
         file_type = file_types[i]
         if file_type == "photo":
@@ -506,6 +522,9 @@ async def confirm_registration(callback: types.CallbackQuery):
         elif file_type == "document":
             await bot.send_document(CHANNEL_ID, doc, caption=f"{translations[lang]['registration_questions'][i]}")
     await bot.send_message(CHANNEL_ID, message_text)
+
+    # Bitrix24'ga yuborish
+    send_lead_to_bitrix(name, phone, documents)
 
     await callback.message.answer(translations[lang]["received"], reply_markup=get_main_menu(lang))
     user_data.pop(user_id, None)
@@ -843,14 +862,26 @@ async def retry_post(callback: types.CallbackQuery):
     await callback.message.delete()
     await bot.send_message(user_id, translations[lang]["post_prompt"], reply_markup=get_registration_nav(lang))
 
+# Kunlik foydalanuvchilarni yangilash
+async def reset_daily_users():
+    while True:
+        now = datetime.now()
+        next_midnight = (now.replace(hour=23, minute=59, second=59, microsecond=999999) + timedelta(seconds=1))
+        await asyncio.sleep((next_midnight - now).total_seconds())
+        today = datetime.now().date().isoformat()
+        daily_users[today] = set()
+        save_data()
+        logger.info(f"Kunlik foydalanuvchilar {today} uchun yangilandi.")
+
 # Webhook server
 async def on_startup():
     load_data()
-    await set_bot_commands()  # Bot buyruqlarini o'rnatish
+    await set_bot_commands()
     webhook_info = await bot.get_webhook_info()
     if webhook_info.url != WEBHOOK_URL:
         await bot.set_webhook(url=WEBHOOK_URL)
     logging.info(f"Webhook set to {WEBHOOK_URL}")
+    asyncio.create_task(reset_daily_users())
 
 async def on_shutdown():
     await bot.delete_webhook()
@@ -873,7 +904,7 @@ async def main():
     await site.start()
 
     try:
-        await asyncio.Event().wait()  # Keep the server running
+        await asyncio.Event().wait()
     finally:
         await runner.cleanup()
 
