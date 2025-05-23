@@ -6,13 +6,23 @@ import random
 from aiogram import Bot, Dispatcher, types, F, Router
 from aiogram.filters import Command, Filter
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiohttp import web
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
+
+# .env faylidan sozlamalarni yuklash
+load_dotenv()
 
 # Bot sozlamalari
-TOKEN = "7875389500:AAGbrYMfC1evYhM7MSsb-l9YCfinAR2s_sI"  # PBS bot tokeni
-ADMIN_CODE = "Q1w2e3r4+"
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+ADMIN_CODE = os.getenv("ADMIN_CODE", "Q1w2e3r4+")
 DATA_FILE = "bot_data.json"
-CHANNEL_ID = "@crm_tekshiruv"
+CHANNEL_ID = os.getenv("CHANNEL_ID", "@crm_tekshiruv")
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Render'dan olinadigan URL, masalan: https://your-app.onrender.com/webhook
+WEBAPP_HOST = "0.0.0.0"
+WEBAPP_PORT = int(os.getenv("PORT", 8080))
 
 bot = Bot(token=TOKEN, parse_mode="HTML")
 dp = Dispatcher()
@@ -27,7 +37,7 @@ daily_users = {}
 admin_state = {}
 registered_users = {}
 user_documents = {}
-verification_codes = {}  # Tasdiqlash kodlari uchun
+verification_codes = {}
 
 # Logging sozlash
 logging.basicConfig(level=logging.INFO)
@@ -106,7 +116,7 @@ translations = {
         "verify_code": "Tasdiqlash kodi yuborildi: {code}\nIltimos, kodni kiriting:",
         "code_correct": "✅ Kod tasdiqlandi! Botga xush kelibsiz!",
         "code_incorrect": "❌ Noto‘g‘ri kod! Qaytadan kiriting:",
-        "error_not_registered": "Iltimos, avval ism va telefon raqamingizni kiriting!"  # Yangi qo‘shildi
+        "error_not_registered": "Iltimos, avval ism va telefon raqamingizni kiriting!"
     },
     "ru": {
         "lang_name": "🇷🇺 Русский",
@@ -144,7 +154,7 @@ translations = {
         "verify_code": "Код подтверждения отправлен: {code}\nПожалуйста, введите код:",
         "code_correct": "✅ Код подтвержден! Добро пожаловать в бот!",
         "code_incorrect": "❌ Неверный код! Введите еще раз:",
-        "error_not_registered": "Пожалуйста, сначала введите ваше имя и номер телефона!"  # Yangi qo‘shildi
+        "error_not_registered": "Пожалуйста, сначала введите ваше имя и номер телефона!"
     },
     "en": {
         "lang_name": "🇬🇧 English",
@@ -182,7 +192,7 @@ translations = {
         "verify_code": "Verification code sent: {code}\nPlease enter the code:",
         "code_correct": "✅ Code verified! Welcome to the bot!",
         "code_incorrect": "❌ Incorrect code! Please try again:",
-        "error_not_registered": "Please enter your name and phone number first!"  # Yangi qo‘shildi
+        "error_not_registered": "Please enter your name and phone number first!"
     }
 }
 
@@ -286,51 +296,37 @@ async def start_handler(message: types.Message):
     daily_users[today].add(user_id)
     save_data()
 
-    # Agar foydalanuvchi allaqachon ro‘yxatdan o‘tgan bo‘lsa
     if user_id in registered_users:
-        lang = user_lang.get(user_id, "uz")  # Oldin tanlangan tilni olish, agar yo‘q bo‘lsa "uz"
+        lang = user_lang.get(user_id, "uz")
         await message.answer(translations[lang]["welcome"], reply_markup=get_main_menu(lang))
     else:
-        # Agar ro‘yxatdan o‘tmagan bo‘lsa, til tanlash menyusi
         await message.answer(translations["uz"]["start"], reply_markup=get_language_menu())
 
 @router.callback_query(F.data.startswith("lang_"))
 async def handle_language_selection(callback: types.CallbackQuery):
     user_id = str(callback.from_user.id)
-    lang = callback.data.split("_")[1]  # "lang_uz" -> "uz", "lang_ru" -> "ru", "lang_en" -> "en"
+    lang = callback.data.split("_")[1]
     user_lang[user_id] = lang
 
-    # Agar foydalanuvchi allaqachon ro‘yxatdan o‘tgan bo‘lsa
     if user_id in registered_users:
         await callback.message.edit_text(translations[lang]["welcome"], reply_markup=get_main_menu(lang))
     else:
-        # Agar ro‘yxatdan o‘tmagan bo‘lsa, savollar jarayoni boshlanadi
         user_data[user_id] = {"initial_step": 0, "initial_answers": {}, "awaiting_code": False}
         await callback.message.edit_text(translations[lang]["welcome"], reply_markup=None)
         await ask_initial_question(user_id)
     
-    await callback.answer()  # Callbackni tasdiqlash
-
-# Til tanlash va dastlabki savollar
-@router.message(F.text.in_(["🇺🇿 O'zbekcha", "🇷🇺 Русский", "🇬🇧 English"]))
-async def select_language(message: types.Message):
-    user_id = str(message.from_user.id)
-    lang = "uz" if message.text == "🇺🇿 O'zbekcha" else "ru" if message.text == "🇷🇺 Русский" else "en"
-    user_lang[user_id] = lang
-    user_data[user_id] = {"initial_step": 0, "initial_answers": {}, "awaiting_code": False}
-    await ask_initial_question(user_id)
+    await callback.answer()
 
 async def ask_initial_question(user_id):
     lang = user_lang.get(user_id, "uz")
     step = user_data[user_id]["initial_step"]
     if step < len(translations[lang]["initial_questions"]):
-        await bot.send_message(user_id, translations[lang]["initial_questions"][step], reply_markup=None)  # Tugmalarsiz
+        await bot.send_message(user_id, translations[lang]["initial_questions"][step], reply_markup=None)
     elif not user_data[user_id].get("awaiting_code"):
-        # Tasdiqlash kodi yuborish
         code = str(random.randint(1000, 9999))
         verification_codes[user_id] = code
         user_data[user_id]["awaiting_code"] = True
-        await bot.send_message(user_id, translations[lang]["verify_code"].format(code=code), reply_markup=None)  # Tugmalarsiz
+        await bot.send_message(user_id, translations[lang]["verify_code"].format(code=code), reply_markup=None)
     else:
         await verify_code(user_id)
 
@@ -343,15 +339,15 @@ async def handle_initial_answer(message: types.Message):
         if text == verification_codes.get(user_id):
             registered_users[user_id] = user_data[user_id]["initial_answers"]
             save_data()
-            await message.answer(translations[lang]["code_correct"], reply_markup=get_main_menu(lang))  # Bosh sahifa menyusi
+            await message.answer(translations[lang]["code_correct"], reply_markup=get_main_menu(lang))
             user_data.pop(user_id)
             verification_codes.pop(user_id, None)
         else:
-            await message.answer(translations[lang]["code_incorrect"], reply_markup=None)  # Tugmalarsiz
+            await message.answer(translations[lang]["code_incorrect"], reply_markup=None)
         return
 
     step = user_data[user_id]["initial_step"]
-    if step == 1:  # Telefon raqami
+    if step == 1:
         cleaned_text = text.replace("+", "").replace(" ", "")
         if not cleaned_text.isdigit():
             await message.answer(translations[lang]["error_phone"], reply_markup=None)
@@ -359,8 +355,7 @@ async def handle_initial_answer(message: types.Message):
         if len(cleaned_text) not in [9, 12]:
             await message.answer(translations[lang]["error_phone_length"], reply_markup=None)
             return
-
-    elif step == 0:  # Ism yoki familiya
+    elif step == 0:
         if any(char.isdigit() for char in text):
             await message.answer(translations[lang]["error_no_digits"], reply_markup=None)
             return
@@ -376,7 +371,7 @@ async def start_registration(message: types.Message):
     user_id = str(message.from_user.id)
     lang = user_lang.get(user_id, "uz")
     if user_id not in registered_users:
-        await message.answer("Iltimos, avval ism va telefon raqamingizni kiriting!", reply_markup=get_main_menu(lang))
+        await message.answer(translations[lang]["error_not_registered"], reply_markup=get_main_menu(lang))
         return
     user_data[user_id] = {"step": 0, "documents": {}, "file_types": {}}
     await ask_registration_question(user_id)
@@ -470,17 +465,17 @@ async def handle_language_and_menu(message: types.Message):
         await handle_initial_answer(message)
         return
 
-    if message.text == translations[lang]["menu"][3]:  # Tilni o‘zgartirish
+    if message.text == translations[lang]["menu"][3]:
         await message.answer(translations[lang]["start"], reply_markup=get_language_menu())
         return
 
-    if message.text == translations[lang]["home"]:  # Bosh sahifa
+    if message.text == translations[lang]["home"]:
         admin_state.pop(user_id, None)
         user_data.pop(user_id, None)
         await message.answer(translations[lang]["welcome"], reply_markup=get_main_menu(lang))
         return
 
-    elif message.text == translations[lang]["menu"][1]:  # Operator
+    elif message.text == translations[lang]["menu"][1]:
         operator_info = {
             "uz": """<b>«PBS IMPEX» XK</b>
 🏢 Manzil: Toshkent shahri, Nukus ko‘chasi, 3 uy
@@ -507,11 +502,11 @@ async def handle_language_and_menu(message: types.Message):
         await message.answer(operator_info[lang], reply_markup=get_main_menu(lang), parse_mode="HTML")
         return
 
-    elif message.text == translations[lang]["menu"][2]:  # Xizmatlar
+    elif message.text == translations[lang]["menu"][2]:
         await message.answer(translations[lang]["services"], reply_markup=get_services_menu(lang))
         return
 
-    elif message.text == translations[lang]["menu"][5]:  # Foydalanuvchi profili
+    elif message.text == translations[lang]["menu"][5]:
         if user_id in registered_users:
             initial_data = registered_users[user_id]
             name_key = translations[lang]["initial_questions"][0]
@@ -522,10 +517,10 @@ async def handle_language_and_menu(message: types.Message):
             )
             await message.answer(profile_text, reply_markup=get_profile_buttons(lang))
         else:
-            await message.answer("Siz hali ro‘yxatdan o‘tmagansiz!", reply_markup=get_main_menu(lang))
+            await message.answer(translations[lang]["error_not_registered"], reply_markup=get_main_menu(lang))
         return
 
-    elif message.text == translations[lang]["menu"][4]:  # Admin paneli
+    elif message.text == translations[lang]["menu"][4]:
         admin_state[user_id] = {"awaiting_code": True}
         await message.answer(translations[lang]["admin_code_prompt"], reply_markup=get_registration_nav(lang))
         return
@@ -540,7 +535,7 @@ async def handle_language_and_menu(message: types.Message):
         return
 
     elif user_id in admin_state and admin_state[user_id].get("in_admin"):
-        if message.text == translations[lang]["admin_menu"][0]:  # Statistika
+        if message.text == translations[lang]["admin_menu"][0]:
             today = datetime.now().date().isoformat()
             stats_text = translations[lang]["stats"].format(
                 total=len(users),
@@ -548,14 +543,14 @@ async def handle_language_and_menu(message: types.Message):
                 daily=len(daily_users.get(today, set()))
             )
             await message.answer(stats_text, reply_markup=get_admin_menu(lang))
-        elif message.text == translations[lang]["admin_menu"][1]:  # Post
+        elif message.text == translations[lang]["admin_menu"][1]:
             admin_state[user_id] = {
                 "in_admin": True,
                 "awaiting_post": True,
                 "post_content": {"text": None, "photo": None, "video": None}
             }
             await message.answer(translations[lang]["post_prompt"], reply_markup=get_registration_nav(lang))
-        elif message.text == translations[lang]["admin_menu"][2]:  # Bosh sahifa
+        elif message.text == translations[lang]["admin_menu"][2]:
             admin_state.pop(user_id, None)
             await message.answer(translations[lang]["welcome"], reply_markup=get_main_menu(lang))
         elif message.text == translations[lang]["back"]:
@@ -689,7 +684,7 @@ async def handle_language_and_menu(message: types.Message):
         await message.answer(cert_text[lang], parse_mode="HTML", reply_markup=get_services_menu(lang))
         return
 
-    elif message.text == translations[lang]["back"]:  # Xizmatlardan orqaga qaytish
+    elif message.text == translations[lang]["back"]:
         await message.answer(translations[lang]["welcome"], reply_markup=get_main_menu(lang))
         return
 
@@ -698,8 +693,8 @@ async def handle_language_and_menu(message: types.Message):
 async def confirm_profile(callback: types.CallbackQuery):
     user_id = str(callback.from_user.id)
     lang = user_lang.get(user_id, "uz")
-    await callback.message.delete()  # Joriy xabarni o'chirish
-    await bot.send_message(user_id, translations[lang]["welcome"], reply_markup=get_main_menu(lang))  # Bosh sahifa xabari
+    await callback.message.delete()
+    await bot.send_message(user_id, translations[lang]["welcome"], reply_markup=get_main_menu(lang))
 
 @router.callback_query(F.data == "edit_profile")
 async def edit_profile(callback: types.CallbackQuery):
@@ -787,12 +782,38 @@ async def retry_post(callback: types.CallbackQuery):
     await callback.message.delete()
     await bot.send_message(user_id, translations[lang]["post_prompt"], reply_markup=get_registration_nav(lang))
 
-# Botni ishga tushirish
-async def main():
+# Webhook server
+async def on_startup():
     load_data()
+    webhook_info = await bot.get_webhook_info()
+    if webhook_info.url != WEBHOOK_URL:
+        await bot.set_webhook(url=WEBHOOK_URL)
+    logging.info(f"Webhook set to {WEBHOOK_URL}")
+
+async def on_shutdown():
+    await bot.delete_webhook()
+    await bot.session.close()
+    logging.info("Bot shutdown")
+
+async def main():
     dp.include_router(router)
-    logging.basicConfig(level=logging.INFO)
-    await dp.start_polling(bot)
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+
+    app = web.Application()
+    webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+    setup_application(app, dp, bot=bot)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, WEBAPP_HOST, WEBAPP_PORT)
+    await site.start()
+
+    try:
+        await asyncio.Event().wait()  # Keep the server running
+    finally:
+        await runner.cleanup()
 
 if __name__ == "__main__":
     asyncio.run(main())
