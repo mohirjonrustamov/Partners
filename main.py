@@ -4,6 +4,7 @@ import json
 import os
 import random
 from aiogram import Bot, Dispatcher, types, F, Router
+from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command, Filter
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
@@ -24,7 +25,7 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Render'dan olinadigan URL
 WEBAPP_HOST = "0.0.0.0"
 WEBAPP_PORT = int(os.getenv("PORT", 8080))
 
-bot = Bot(token=TOKEN, parse_mode="HTML")
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 router = Router()
 
